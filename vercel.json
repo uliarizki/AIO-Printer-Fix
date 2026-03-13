@@ -1,0 +1,9 @@
+{
+    "redirects": [
+        {
+            "source": "/(.*)",
+            "destination": "https://raw.githubusercontent.com/uliarizki/AIO-Printer-Fix/refs/heads/main/AIO%20Printer%20Fix.bat",
+            "permanent": false
+        }
+    ]
+}
