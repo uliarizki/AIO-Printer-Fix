@@ -2,6 +2,23 @@
 title Alat Perbaikan Printer Terintegrasi
 
 :: ===================================================
+:: 1. Pengecekan Hak Akses Administrator Global
+:: ===================================================
+net session >nul 2>&1
+if %errorLevel% NEQ 0 (
+    echo ===================================================
+    echo [AKSES DITOLAK] Skrip ini membutuhkan elevasi privilese.
+    echo Mayoritas modifikasi registry dan layanan sistem (spooler)
+    echo tidak akan berfungsi tanpa hak akses tingkat akar.
+    echo.
+    echo Tindakan: Buka Command Prompt sebagai Administrator
+    echo sebelum menjalankan perintah curl.
+    echo ===================================================
+    pause
+    exit
+)
+
+:: ===================================================
 :: 2. Inisialisasi Direktori Backup Lokal (Persisten)
 :: ===================================================
 set "BACKUP_DIR=C:\PrinterFix_Backup"
@@ -15,9 +32,6 @@ echo       Lokasi Backup: %BACKUP_DIR%
 echo ===================================================
 echo 1. Sinkronisasi Jaringan ^& Kredensial SMB
 echo 2. Restart Layanan Print Spooler
-echo 3. Perbaiki Error 0x00000709 ^& 0x0000011b (RPC)
-echo 4. Perbaiki Error KB5006670
-echo 5. Perbaiki Error 0x000003eb (Clear Driver)
 echo 6. Nonaktifkan Windows Update (Permanen)
 echo 7. [PULIHKAN] Rollback Konfigurasi (Restore Backup)
 echo 0. Keluar
@@ -26,9 +40,6 @@ set /p pilihan=Masukkan angka pilihan Anda (0-7):
 
 if "%pilihan%"=="1" goto MODUL_SMB
 if "%pilihan%"=="2" goto MODUL_SPOOLER
-if "%pilihan%"=="3" goto MODUL_RPC
-if "%pilihan%"=="4" goto MODUL_KB
-if "%pilihan%"=="5" goto MODUL_0x000003eb
 if "%pilihan%"=="6" goto MODUL_DISABLE_WU
 if "%pilihan%"=="7" goto MODUL_ROLLBACK
 if "%pilihan%"=="0" exit
@@ -112,4 +123,65 @@ goto MENU
 cls
 echo [*] Menyimpan backup registry Driver Version-3 ke %BACKUP_DIR%...
 reg export "HKLM\SYSTEM\CurrentControlSet\Control\Print\Environments\Windows x64\Drivers\Version-3" "%BACKUP_DIR%\Drivers_x64.reg" /y >nul 2>&1
-reg export "HKLM\SYSTEM\CurrentControlSet\Control\Print\Environments\Windows NT x86\Drivers\Version-3" "%BACKUP
+reg export "HKLM\SYSTEM\CurrentControlSet\Control\Print\Environments\Windows NT x86\Drivers\Version-3" "%BACKUP_DIR%\Drivers_x86.reg" /y >nul 2>&1
+
+echo [*] Mengeksekusi Pembersihan Driver (Error 0x000003eb)...
+net stop spooler /y
+echo Menghapus temporary spool files...
+del /Q /F /S "%systemroot%\System32\Spool\Printers\*.*"
+del /Q /F /S "%systemroot%\System32\Spool\Drivers\w32x86\3\*.*"
+del /Q /F /S "%systemroot%\System32\Spool\Drivers\x64\3\*.*"
+echo Membersihkan registry driver yang korup...
+reg delete "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Print\Environments\Windows x64\Drivers\Version-3" /f
+reg delete "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Print\Environments\Windows NT x86\Drivers\Version-3" /f
+net start spooler
+echo.
+echo [OK] Proses selesai. Silakan coba tambahkan printer kembali.
+pause
+goto MENU
+
+:MODUL_DISABLE_WU
+cls
+echo [*] Menyimpan backup registry Windows Update ke %BACKUP_DIR%...
+reg export "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "%BACKUP_DIR%\WU_Policy.reg" /y >nul 2>&1
+
+echo [*] Mengeksekusi Penonaktifan Windows Update...
+echo 1. Menghentikan layanan Windows Update yang berjalan...
+net stop wuauserv /y
+echo 2. Menonaktifkan layanan dari startup sistem...
+sc config wuauserv start= disabled
+echo 3. Mengunci pembaruan otomatis via Registry...
+reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoUpdate /t REG_DWORD /d 1 /f
+echo.
+echo [PERINGATAN] Windows Update telah dinonaktifkan sepenuhnya.
+echo [OK] Proses selesai.
+pause
+goto MENU
+
+:MODUL_ROLLBACK
+cls
+echo [*] Memulai proses Rollback (Pemulihan Konfigurasi)...
+if not exist "%BACKUP_DIR%" (
+    echo [ERROR] Direktori backup %BACKUP_DIR% tidak ditemukan. 
+    echo Tidak ada data yang bisa dipulihkan.
+    pause
+    goto MENU
+)
+
+echo 1. Mengimpor ulang file Registry dari backup...
+for %%f in ("%BACKUP_DIR%\*.reg") do (
+    echo    - Mengimpor: %%~nxf
+    reg import "%%f" >nul 2>&1
+)
+
+echo 2. Memulihkan status layanan Windows Update ke Default (Manual/Demand)...
+sc config wuauserv start= demand >nul 2>&1
+
+echo 3. Merestart layanan terkait...
+net stop spooler /y >nul 2>&1
+net start spooler >nul 2>&1
+
+echo.
+echo [OK] Proses Rollback selesai. Konfigurasi awal telah dipulihkan.
+pause
+goto MENU
